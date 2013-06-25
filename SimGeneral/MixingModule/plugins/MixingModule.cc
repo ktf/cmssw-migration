@@ -50,7 +50,7 @@ namespace edm {
     if (labelPlayback.empty()) {
       labelPlayback = ps_mix.getParameter<std::string>("@module_label");
     }
-    inputTagPlayback_ = InputTag(labelPlayback, "", edm::InputTag::kSkipCurrentProcess);
+    inputTagPlayback_ = InputTag(labelPlayback, "");
 
     ParameterSet ps=ps_mix.getParameter<ParameterSet>("mixObjects");
     std::vector<std::string> names = ps.getParameterNames();

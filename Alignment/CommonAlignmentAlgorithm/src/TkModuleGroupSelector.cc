@@ -3,8 +3,8 @@
  *
  *  \author Joerg Behr
  *  \date May 2013
- *  $Revision: 1.3 $
- *  $Date: 2013/05/31 13:51:22 $
+ *  $Revision: 1.1.2.16 $
+ *  $Date: 2013/05/31 10:13:55 $
  *  (last update by $Author: jbehr $)
  */
 
@@ -104,15 +104,6 @@ bool TkModuleGroupSelector::createGroup(
     Id += range.size();
     nparameters_ += range.size();  
   }
-
-  if(range.front() > refrun) { //range.size() > 0 checked before
-    throw cms::Exception("BadConfig")
-      << "@SUB=TkModuleGroupSelector::createGroup:\n"
-      << "Invalid combination of reference run number and specified run dependence"
-      << "\n in module group " << firstId_.size() << "."
-      << "\n Reference run number is smaller than starting run "
-      << "\n number of first IOV.";
-  }
   return modules_selected;
 }
 
@@ -172,6 +163,7 @@ void TkModuleGroupSelector::createModuleGroups(AlignableTracker *aliTracker,
       refrun = defaultReferenceRun;
     }
     
+
     AlignmentParameterSelector selector(aliTracker);
     selector.clear();
     selector.addSelections((*pset).getParameter<edm::ParameterSet> ("levels"));
@@ -274,8 +266,7 @@ int TkModuleGroupSelector::getParameterIndexFromDetId(unsigned int detId,
     if (runs[0] > run) {
       throw cms::Exception("BadConfig")
         << "@SUB=TkModuleGroupSelector::getParameterIndexFromDetId:\n"
-        << "Run " << run << " not foreseen for detid ('"<< detId <<"')"
-        << " in module group " << iAlignableGroup << ".";
+        << "Run " << run << " not foreseen for detid ('"<< detId <<"').";
     }
     unsigned int iovNum = 0;
     for ( ; iovNum < runs.size(); ++iovNum) {
@@ -290,9 +281,7 @@ int TkModuleGroupSelector::getParameterIndexFromDetId(unsigned int detId,
         if(refrun >= runs[iovNum] && refrun < runs[iovNum+1]) {
           return -1;
         }
-      } 
-      if(run > refrun) {
-        //iovNum > 0 due to checks in createGroup(...) and createModuleGroups(...)
+      } else if(run > refrun) {
         //remove IOV in which the reference run can be found
         iovNum -= 1;
       }

@@ -20,8 +20,8 @@ typedef int clockid_t;
 #include <iomanip>
 #include <string>
 #include <sstream>
-#include <tr1/unordered_set>
-#include <tr1/unordered_map>
+#include <unordered_set>
+#include <unordered_map>
 
 // boost headers
 #include <boost/format.hpp>
@@ -114,7 +114,7 @@ FastTimerService::FastTimerService(const edm::ParameterSet & config, edm::Activi
   m_summary_all_paths(0.),
   m_summary_all_endpaths(0.),
   m_summary_interpaths(0.),
-  // DQM - these are initialized at postBeginJob(), to make sure the DQM service has been loaded
+  // DQM - these are initialized at preBeginRun(), to make sure the DQM service has been loaded
   m_dqms(0),
   // event summary plots
   m_dqm_event(0),
@@ -161,11 +161,9 @@ FastTimerService::FastTimerService(const edm::ParameterSet & config, edm::Activi
   m_current_path(0),
   m_paths(),
   m_modules(),
-  m_fast_moduletypes(),
   m_moduletypes(),
-  m_cache_paths(),
-  m_cache_modules(),
-  m_cache_moduletypes()
+  m_fast_modules(),
+  m_fast_moduletypes()
 {
   // enable timers if required by DQM plots
   m_enable_timing_paths     = m_enable_timing_paths         or 
@@ -189,7 +187,7 @@ FastTimerService::FastTimerService(const edm::ParameterSet & config, edm::Activi
                               m_enable_dqm_bypath_exclusive;
 
   registry.watchPreModuleBeginJob( this, & FastTimerService::preModuleBeginJob );
-  registry.watchPostBeginJob(      this, & FastTimerService::postBeginJob );
+  registry.watchPreBeginRun(       this, & FastTimerService::preBeginRun );
   registry.watchPostEndJob(        this, & FastTimerService::postEndJob );
   registry.watchPrePathBeginRun(   this, & FastTimerService::prePathBeginRun) ;
   registry.watchPreProcessEvent(   this, & FastTimerService::preProcessEvent );
@@ -217,7 +215,8 @@ FastTimerService::~FastTimerService()
 #endif // defined(__APPLE__) || defined(__MACH__)
 }
 
-void FastTimerService::postBeginJob() {
+void FastTimerService::preBeginRun( edm::RunID const &, edm::Timestamp const & )
+{
   //edm::LogImportant("FastTimerService") << __func__ << "()";
 
   // check if the process is bound to a single CPU.
@@ -245,21 +244,6 @@ void FastTimerService::postBeginJob() {
     std::string const & label = tns.getEndPath(i);
     m_paths[label].index = size_p + i;
   }
-
-  // cache all pathinfo objects
-  m_cache_paths.reserve(m_paths.size());
-  for (auto & keyval: m_paths)
-    m_cache_paths.push_back(& keyval.second);
-
-  // cache all moduleinfo objects
-  m_cache_modules.reserve(m_modules.size());
-  for (auto & keyval: m_modules)
-    m_cache_modules.push_back(& keyval.second);
-
-  // cache all moduleinfo type objects
-  m_cache_moduletypes.reserve(m_moduletypes.size());
-  for (auto & keyval: m_moduletypes)
-    m_cache_moduletypes.push_back(& keyval.second);
 
   // associate to each path all the modules it contains
   for (uint32_t i = 0; i < tns.getTrigPaths().size(); ++i)
@@ -534,7 +518,7 @@ void FastTimerService::postBeginJob() {
         if (m_enable_dqm_bypath_exclusive) {
           pathinfo.dqm_exclusive = m_dqms->book1D(pathname + "_exclusive", pathname + " exclusive time", pathbins, 0., m_dqm_pathtime_range)->getTH1F();
           pathinfo.dqm_exclusive ->StatOverflows(true);
-          pathinfo.dqm_exclusive ->SetYTitle("processing time [ms]");
+          pathinfo.dqm_exclusive ->SetXTitle("processing time [ms]");
         }
 
       }
@@ -543,7 +527,7 @@ void FastTimerService::postBeginJob() {
     if (m_enable_dqm_bymodule) {
       m_dqms->setCurrentFolder((m_dqm_path + "/Modules"));
       for (auto & keyval: m_modules) {
-        std::string const & label  = keyval.first->moduleLabel();
+        std::string const & label  = keyval.first;
         ModuleInfo        & module = keyval.second;
         module.dqm_active = m_dqms->book1D(label, label, modulebins, 0., m_dqm_moduletime_range)->getTH1F();
         module.dqm_active->StatOverflows(true);
@@ -553,9 +537,9 @@ void FastTimerService::postBeginJob() {
 
     if (m_enable_dqm_bymoduletype) {
       m_dqms->setCurrentFolder((m_dqm_path + "/ModuleTypes"));
-      for (auto & keyval: m_fast_moduletypes) {
-        std::string const & label  = keyval.first->moduleName();
-        ModuleInfo        & module = * keyval.second;
+      for (auto & keyval: m_moduletypes) {
+        std::string const & label  = keyval.first;
+        ModuleInfo        & module = keyval.second;
         module.dqm_active = m_dqms->book1D(label, label, modulebins, 0., m_dqm_moduletime_range)->getTH1F();
         module.dqm_active->StatOverflows(true);
         module.dqm_active->SetXTitle("processing time [ms]");
@@ -637,20 +621,20 @@ void FastTimerService::postEndJob() {
       double modules_total = 0.;
       for (auto & keyval: m_modules)
         modules_total += keyval.second.summary_active;
-      out << "FastReport              " << std::right << std::setw(10) << modules_total          / (double) m_summary_events << "  all Modules"   << '\n';
+      out << "FastReport              " << std::right << std::setw(10) << modules_total / (double) m_summary_events << "  all Modules"   << '\n';
     }
     out << '\n';
     if (m_enable_timing_paths and not m_enable_timing_modules) {
       out << "FastReport " << (m_timer_id == CLOCK_REALTIME ? "(real time) " : "(CPU time)  ")    << "     Active Path" << '\n';
       for (auto const & name: tns.getTrigPaths())
         out << "FastReport              "
-            << std::right << std::setw(10) << m_paths[name].summary_active  / (double) m_summary_events << "  "
+            << std::right << std::setw(10) << m_paths[name].summary_active / (double) m_summary_events << "  "
             << name << '\n';
       out << '\n';
       out << "FastReport " << (m_timer_id == CLOCK_REALTIME ? "(real time) " : "(CPU time)  ")    << "     Active EndPath" << '\n';
       for (auto const & name: tns.getEndPaths())
         out << "FastReport              "
-            << std::right << std::setw(10) << m_paths[name].summary_active  / (double) m_summary_events << "  "
+            << std::right << std::setw(10) << m_paths[name].summary_active / (double) m_summary_events << "  "
             << name << '\n';
     } else if (m_enable_timing_paths and m_enable_timing_modules) {
       out << "FastReport " << (m_timer_id == CLOCK_REALTIME ? "(real time) " : "(CPU time)  ")    << "     Active       Pre-     Inter-  Post-mods   Overhead      Total  Path" << '\n';
@@ -681,7 +665,7 @@ void FastTimerService::postEndJob() {
     if (m_enable_timing_modules) {
       out << "FastReport " << (m_timer_id == CLOCK_REALTIME ? "(real time) " : "(CPU time)  ")    << "     Active  Module" << '\n';
       for (auto & keyval: m_modules) {
-        std::string const & label  = keyval.first->moduleLabel();
+        std::string const & label  = keyval.first;
         ModuleInfo  const & module = keyval.second;
         out << "FastReport              " << std::right << std::setw(10) << module.summary_active  / (double) m_summary_events << "  " << label << '\n';
       }
@@ -772,11 +756,9 @@ void FastTimerService::reset() {
   m_current_path = 0;
   m_paths.clear();          // this should destroy all PathInfo objects and Reset the associated plots
   m_modules.clear();        // this should destroy all ModuleInfo objects and Reset the associated plots
-  m_fast_moduletypes.clear();
   m_moduletypes.clear();    // this should destroy all ModuleInfo objects and Reset the associated plots
-  m_cache_paths.clear();
-  m_cache_modules.clear();
-  m_cache_moduletypes.clear();
+  m_fast_modules.clear();
+  m_fast_moduletypes.clear();
 }
 
 void FastTimerService::preModuleBeginJob(edm::ModuleDescription const & module) {
@@ -784,7 +766,7 @@ void FastTimerService::preModuleBeginJob(edm::ModuleDescription const & module) 
   //edm::LogImportant("FastTimerService") << "module type " << module.moduleName() << " label " << module.moduleLabel() << " @ " << & module;
 
   // allocate a counter for each module and module type
-  m_modules[& module];
+  m_fast_modules[& module]     = & m_modules[module.moduleLabel()];;
   m_fast_moduletypes[& module] = & m_moduletypes[module.moduleName()];
 }
 
@@ -799,22 +781,22 @@ void FastTimerService::preProcessEvent(edm::EventID const & id, edm::Timestamp c
   m_all_paths    = 0;
   m_all_endpaths = 0;
   m_interpaths   = 0;
-  for (PathInfo * path: m_cache_paths) {
-    path->time_active       = 0.;
-    path->time_premodules   = 0.;
-    path->time_intermodules = 0.;
-    path->time_postmodules  = 0.;
-    path->time_total        = 0.;
+  for (auto & keyval : m_paths) {
+    keyval.second.time_active       = 0.;
+    keyval.second.time_premodules   = 0.;
+    keyval.second.time_intermodules = 0.;
+    keyval.second.time_postmodules  = 0.;
+    keyval.second.time_total        = 0.;
   }
-  for (ModuleInfo * module: m_cache_modules) {
-    module->time_active     = 0.;
-    module->has_just_run    = false;
-    module->is_exclusive    = false;
+  for (auto & keyval : m_modules) {
+    keyval.second.time_active       = 0.;
+    keyval.second.has_just_run      = false;
+    keyval.second.is_exclusive      = false;
   }
-  for (ModuleInfo * module: m_cache_moduletypes) {
-    module->time_active     = 0.;
-    module->has_just_run    = false;
-    module->is_exclusive    = false;
+  for (auto & keyval : m_moduletypes) {
+    keyval.second.time_active       = 0.;
+    keyval.second.has_just_run      = false;
+    keyval.second.is_exclusive      = false;
   }
 
   // copy the start event timestamp as the end of the previous path
@@ -1176,10 +1158,10 @@ void FastTimerService::postModule(edm::ModuleDescription const & module) {
   stop(m_timer_module);
 
   { // if-scope
-    ModuleMap<ModuleInfo>::iterator keyval = m_modules.find(& module);
-    if (keyval != m_modules.end()) {
+    ModuleMap<ModuleInfo*>::iterator keyval = m_fast_modules.find(& module);
+    if (keyval != m_fast_modules.end()) {
       double time = delta(m_timer_module);
-      ModuleInfo & module = keyval->second;
+      ModuleInfo & module = * keyval->second;
       module.has_just_run    = true;
       module.time_active     = time;
       module.summary_active += time;
@@ -1207,46 +1189,28 @@ void FastTimerService::postModule(edm::ModuleDescription const & module) {
 
 }
 
-// find the module description associated to a module, by label
-edm::ModuleDescription const * FastTimerService::findModuleDescription(const std::string & label) const {
-  // no descriptions are associated to an empty label
-  if (label.empty())
-    return 0;
-
-  // fix the name of negated or ignored modules
-  std::string const & target = (label[0] == '!' or label[0] == '-') ? label.substr(1) : label;
-
-  for (auto const & keyval: m_modules) {
-    if (keyval.first == 0) {
-      // this should never happen, but it would cause a segmentation fault to insert a null pointer in the path map, se we explicitly check for it and skip it
-      edm::LogError("FastTimerService") << "FastTimerService::findModuleDescription: invalid entry detected in ModuleMap<ModuleInfo> m_modules, skipping";
-      continue;
-    }
-    if (keyval.first->moduleLabel() == target) {
-      return keyval.first;
-    }
-  }
-  // not found
-  return 0;
-}
-
 // associate to a path all the modules it contains
 void FastTimerService::fillPathMap(std::string const & name, std::vector<std::string> const & modules) {
   std::vector<ModuleInfo *> & pathmap = m_paths[name].modules;
+  pathmap.clear();
   pathmap.reserve( modules.size() );
-  std::tr1::unordered_set<edm::ModuleDescription const *> pool;        // keep track of inserted modules
+  std::unordered_set<ModuleInfo const *> pool;        // keep track of inserted modules
   for (auto const & module: modules) {
-    edm::ModuleDescription const * md = findModuleDescription(module);
-    if (md == 0) {
+    // fix the name of negated or ignored modules
+    std::string const & label = (module[0] == '!' or module[0] == '-') ? module.substr(1) : module;
+
+    auto const & it = m_modules.find(label);
+    if (it == m_modules.end()) {
       // no matching module was found
       pathmap.push_back( 0 );
-    } else if (pool.insert(md).second) {
+    } else if (pool.insert(& it->second).second) {
       // new module
-      pathmap.push_back( & m_modules[md] );
+      pathmap.push_back(& it->second);
     } else {
       // duplicate module
       pathmap.push_back( 0 );
     }
+
   }
 }
 
@@ -1277,11 +1241,35 @@ double FastTimerService::currentEventTime() const {
 
 // query the time spent in a module (available after the module has run)
 double FastTimerService::queryModuleTime(const edm::ModuleDescription & module) const {
-  ModuleMap<ModuleInfo>::const_iterator keyval = m_modules.find(& module);
+  ModuleMap<ModuleInfo *>::const_iterator keyval = m_fast_modules.find(& module);
+  if (keyval != m_fast_modules.end()) {
+    return keyval->second->time_active;
+  } else {
+    edm::LogError("FastTimerService") << "FastTimerService::queryModuleTime: unexpected module " << module.moduleLabel();
+    return 0.;
+  }
+}
+
+// query the time spent in a module (available after the module has run
+double FastTimerService::queryModuleTimeByLabel(const std::string & label) const {
+  auto const & keyval = m_modules.find(label);
   if (keyval != m_modules.end()) {
     return keyval->second.time_active;
   } else {
-    edm::LogError("FastTimerService") << "FastTimerService::postModule: unexpected module " << module.moduleLabel();
+    // module not found
+    edm::LogError("FastTimerService") << "FastTimerService::queryModuleTimeByLabel: unexpected module " << label;
+    return 0.;
+  }
+}
+
+// query the time spent in a module (available after the module has run
+double FastTimerService::queryModuleTimeByType(const std::string & type) const {
+  auto const & keyval = m_moduletypes.find(type);
+  if (keyval != m_moduletypes.end()) {
+    return keyval->second.time_active;
+  } else {
+    // module not found
+    edm::LogError("FastTimerService") << "FastTimerService::queryModuleTimeByType: unexpected module type " << type;
     return 0.;
   }
 }
@@ -1292,7 +1280,7 @@ double FastTimerService::queryPathActiveTime(const std::string & path) const {
   if (keyval != m_paths.end()) {
     return keyval->second.time_active;
   } else {
-    edm::LogError("FastTimerService") << "FastTimerService::postModule: unexpected path " << path;
+    edm::LogError("FastTimerService") << "FastTimerService::queryPathActiveTime: unexpected path " << path;
     return 0.;
   }
 }
@@ -1303,7 +1291,7 @@ double FastTimerService::queryPathTotalTime(const std::string & path) const {
   if (keyval != m_paths.end()) {
     return keyval->second.time_total;
   } else {
-    edm::LogError("FastTimerService") << "FastTimerService::postModule: unexpected path " << path;
+    edm::LogError("FastTimerService") << "FastTimerService::queryPathTotalTime: unexpected path " << path;
     return 0.;
   }
 }

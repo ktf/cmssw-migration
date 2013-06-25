@@ -18,7 +18,7 @@ typedef int clockid_t;
 #include <cmath>
 #include <string>
 #include <map>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <unistd.h>
 
 // CMSSW headers
@@ -94,6 +94,8 @@ public:
 
   // query the time spent in a module/path (available after it has run)
   double queryModuleTime(const edm::ModuleDescription &) const;
+  double queryModuleTimeByLabel(const std::string &) const;
+  double queryModuleTimeByType(const std::string &) const;
   double queryPathActiveTime(const std::string &) const;
   double queryPathTotalTime(const std::string &) const;
 
@@ -118,8 +120,8 @@ public:
   void setNumberOfProcesses(unsigned int);
 
 private:
-  void postBeginJob();
   void postEndJob();
+  void preBeginRun( edm::RunID const &, edm::Timestamp const & );
   void preModuleBeginJob( edm::ModuleDescription const & );
   void preProcessEvent( edm::EventID const &, edm::Timestamp const & );
   void postProcessEvent( edm::Event const &, edm::EventSetup const & );
@@ -261,8 +263,8 @@ private:
     }
   };
 
-  template <typename T> class PathMap   : public std::tr1::unordered_map<std::string, T> {};
-  template <typename T> class ModuleMap : public std::tr1::unordered_map<edm::ModuleDescription const *, T> {};
+  template <typename T> class PathMap   : public std::unordered_map<std::string, T> {};
+  template <typename T> class ModuleMap : public std::unordered_map<edm::ModuleDescription const *, T> {};
 
   // timer configuration
   const clockid_t                               m_timer_id;             // the default is to use CLOCK_THREAD_CPUTIME_ID, unless useRealTimeClock is set, which will use CLOCK_REALTIME
@@ -377,12 +379,10 @@ private:
   // per-path, per-module and per-module-type accounting
   PathInfo *                                    m_current_path;
   PathMap<PathInfo>                             m_paths;
-  ModuleMap<ModuleInfo>                         m_modules;              // these assume that ModuleDescription are stored in the same object through the whole job,
+  std::unordered_map<std::string, ModuleInfo>   m_modules;
+  std::unordered_map<std::string, ModuleInfo>   m_moduletypes;
+  ModuleMap<ModuleInfo *>                       m_fast_modules;         // these assume that ModuleDescription are stored in the same object through the whole job,
   ModuleMap<ModuleInfo *>                       m_fast_moduletypes;     // which is true only *after* the edm::Worker constructors have run
-  std::map<std::string, ModuleInfo>             m_moduletypes;
-  std::vector<PathInfo *>                       m_cache_paths;
-  std::vector<ModuleInfo *>                     m_cache_modules;
-  std::vector<ModuleInfo *>                     m_cache_moduletypes;
 
   // timers
   std::pair<struct timespec, struct timespec>   m_timer_event;          // track time spent in each event
@@ -436,9 +436,6 @@ private:
   {
     return delta(times.first, times.second);
   }
-
-  // find the module description associated to a module, by name
-  edm::ModuleDescription const * findModuleDescription(const std::string & module) const;
 
   // associate to a path all the modules it contains
   void fillPathMap(std::string const & name, std::vector<std::string> const & modules);

@@ -233,7 +233,7 @@ processSuperClusterFillTree(const edm::Event& e,
 							     pclus->eta(),
 							     pclus->phi());
     clusterInDynDPhi.get()[iclus] = (Int_t)
-      MK::inDynamicDPhiWindow(theseed->eta(),
+      MK::inDynamicDPhiWindow(PFLayer::ECAL_BARREL == pclus->layer(),
 			      theseed->phi(),
 			      pclus->energy(),
 			      pclus->eta(),
